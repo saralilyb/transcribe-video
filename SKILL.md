@@ -1,6 +1,15 @@
 ---
 name: transcribe-video
 description: Transcribe video or audio files to timestamped VTT subtitle files locally on Apple Silicon Macs or Linux machines with an NVIDIA GPU (including WSL2). On macOS, English and other European languages use NVIDIA Parakeet (parakeet-mlx, fast) and Japanese uses kotoba-whisper (mlx-whisper); on Linux, a single faster-whisper CUDA path handles everything (kotoba-whisper for Japanese). Use this skill whenever the user wants to transcribe, get a transcript of, get subtitles for, get captions for, extract speech from, or "get the text out of" a video or audio file (mp4, mov, mkv, mp3, m4a, wav, etc.). Also use when the user asks "what's said in this video" or wants to search/summarize spoken content. Bootstraps required dependencies (system package manager + ffmpeg, uv, and the transcription engine) automatically with user consent. All processing happens locally on the user's machine — nothing is sent to any cloud service.
+version: 1.0.0
+author: Sara Burke
+license: MIT
+platforms: [linux, macos]
+metadata:
+  hermes:
+    tags: [transcription, asr, whisper, parakeet, kotoba, vtt, subtitles, captions, video, audio]
+    homepage: https://github.com/saralilyb/transcribe-video
+    related_skills: []
 ---
 
 # Transcribe Video
