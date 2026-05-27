@@ -467,6 +467,24 @@ info "Using local snapshot: $MODEL_DIR"
 # Make the bundled CUDA libs discoverable to CTranslate2's dlopen.
 export_cuda_ld_path
 
+# Word-level timestamps refine segment boundaries by re-aligning each word
+# against the encoder output via `model.align()`. Some CT2-converted Whisper
+# checkpoints — notably kotoba-tech/kotoba-whisper-v2.0-faster — ship without
+# the alignment_heads tensor that align() needs, and crash with
+# `MemoryError: std::bad_alloc` mid-transcription. Our VTT is segment-level
+# anyway (word timestamps aren't surfaced in cues; they only nudge segment
+# edges), so on those models we disable word_timestamps and accept slightly
+# less precise segment boundaries in exchange for the transcription
+# actually completing. Pattern-matches the model string so user-supplied
+# --model overrides for the same family get the same treatment.
+WORD_TS_FLAG="True"
+case "$MODEL" in
+  *kotoba*)
+    WORD_TS_FLAG="False"
+    info "Disabling word-level timestamps (kotoba CT2 checkpoint lacks alignment heads)."
+    ;;
+esac
+
 # Word-splitting on the optional language flag is intentional here.
 # shellcheck disable=SC2086
 whisper-ctranslate2 "$TMPWAV" \
@@ -475,7 +493,7 @@ whisper-ctranslate2 "$TMPWAV" \
   --compute_type float16 \
   --output_format vtt \
   --output_dir "$WORKDIR" \
-  --word_timestamps True \
+  --word_timestamps "$WORD_TS_FLAG" \
   --condition_on_previous_text False \
   --no_speech_threshold 0.3 \
   ${LANGUAGE:+--language "$LANGUAGE"}
