@@ -379,15 +379,36 @@ else
 fi
 
 # ──────────────────────────────────────────────────────────────────────
+# Resolve the local snapshot path for the downloaded model
+# ──────────────────────────────────────────────────────────────────────
+# whisper-ctranslate2's --model flag only accepts a fixed enum of built-in
+# Whisper size names (tiny, large-v3, large-v3-turbo, ...). It does NOT
+# accept arbitrary HuggingFace repo ids. For our case — Systran's CT2-
+# converted large-v3, and kotoba-tech's CT2-converted kotoba-whisper —
+# we need to point at the on-disk snapshot directory via --model_directory.
+# HF stores snapshots at:
+#   ~/.cache/huggingface/hub/models--<owner>--<name>/snapshots/<commit-sha>/
+MODEL_SNAPSHOT_BASE="$HOME/.cache/huggingface/hub/models--${MODEL//\//--}/snapshots"
+# shellcheck disable=SC2012
+MODEL_DIR=$(ls -1dt "$MODEL_SNAPSHOT_BASE"/*/ 2>/dev/null | head -1)
+MODEL_DIR="${MODEL_DIR%/}"
+if [ -z "$MODEL_DIR" ] || [ ! -d "$MODEL_DIR" ]; then
+  err "Could not locate downloaded snapshot for model: $MODEL"
+  err "Expected a directory under: $MODEL_SNAPSHOT_BASE"
+  exit 1
+fi
+
+# ──────────────────────────────────────────────────────────────────────
 # Transcribe
 # ──────────────────────────────────────────────────────────────────────
 notify "Transcription" "Starting transcription with faster-whisper on CUDA. Usually well under realtime on a modern GPU."
 info "Transcribing with whisper-ctranslate2 ($MODEL)..."
+info "Using local snapshot: $MODEL_DIR"
 
 # Word-splitting on the optional language flag is intentional here.
 # shellcheck disable=SC2086
 whisper-ctranslate2 "$TMPWAV" \
-  --model "$MODEL" \
+  --model_directory "$MODEL_DIR" \
   --device cuda \
   --compute_type float16 \
   --output_format vtt \
