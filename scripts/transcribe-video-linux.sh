@@ -226,32 +226,82 @@ ensure_uv() {
   ok "uv installed."
 }
 
+# Where uv stores tool venvs. We poke at this directory to detect whether
+# the CTranslate2 CUDA runtime shims (nvidia-cublas-cu12, nvidia-cudnn-cu12)
+# are present in the whisper-ctranslate2 tool venv. CTranslate2 needs
+# libcublas.so.12 and libcudnn.so.* at runtime; the NVIDIA WSL2 driver
+# only provides libcuda + libnvidia-ml, NOT cuBLAS or cuDNN. The PyPI
+# nvidia-*-cu12 wheels ship those .so files and are the upstream-
+# recommended way to satisfy them without installing the full CUDA
+# toolkit system-wide.
+WHISPER_TOOL_DIR="$HOME/.local/share/uv/tools/whisper-ctranslate2"
+
+# Returns 0 if both nvidia-cublas-cu12 and nvidia-cudnn-cu12 are present
+# in the whisper-ctranslate2 tool venv (matched by their .so file).
+cuda_shims_present() {
+  ls "$WHISPER_TOOL_DIR"/lib/python*/site-packages/nvidia/cublas/lib/libcublas.so.12 \
+     >/dev/null 2>&1 \
+  && ls "$WHISPER_TOOL_DIR"/lib/python*/site-packages/nvidia/cudnn/lib/libcudnn.so.* \
+        >/dev/null 2>&1
+}
+
 ensure_whisper_ctranslate2() {
-  if command -v whisper-ctranslate2 >/dev/null 2>&1; then
-    ok "whisper-ctranslate2 is installed."
+  if command -v whisper-ctranslate2 >/dev/null 2>&1 && cuda_shims_present; then
+    ok "whisper-ctranslate2 is installed (with CUDA runtime libs)."
     return 0
   fi
 
   ensure_uv
 
-  warn "whisper-ctranslate2 is not installed. It's the faster-whisper-based transcription engine."
-  if ! ask_yes_no "Install whisper-ctranslate2 via uv now?"; then
-    err "Cannot continue without whisper-ctranslate2."
-    exit 1
+  if command -v whisper-ctranslate2 >/dev/null 2>&1; then
+    warn "whisper-ctranslate2 is installed but is missing the CUDA runtime libs."
+    echo "    CTranslate2 needs libcublas.so.12 / libcudnn.so.* at runtime."
+    echo "    Will reinstall with nvidia-cublas-cu12 and nvidia-cudnn-cu12 wheels."
+    if ! ask_yes_no "Reinstall whisper-ctranslate2 with bundled CUDA libs now?"; then
+      err "Cannot continue without CUDA runtime libs."
+      exit 1
+    fi
+  else
+    warn "whisper-ctranslate2 is not installed. It's the faster-whisper-based transcription engine."
+    if ! ask_yes_no "Install whisper-ctranslate2 (with bundled CUDA libs) via uv now?"; then
+      err "Cannot continue without whisper-ctranslate2."
+      exit 1
+    fi
   fi
 
-  notify "Setup" "Installing whisper-ctranslate2."
-  info "Installing whisper-ctranslate2..."
-  uv tool install whisper-ctranslate2
+  notify "Setup" "Installing whisper-ctranslate2 with CUDA runtime libs."
+  info "Installing whisper-ctranslate2 (+ nvidia-cublas-cu12 + nvidia-cudnn-cu12)..."
+  uv tool install --reinstall whisper-ctranslate2 \
+    --with nvidia-cublas-cu12 \
+    --with nvidia-cudnn-cu12
 
   export PATH="$HOME/.local/bin:$PATH"
 
   if ! command -v whisper-ctranslate2 >/dev/null 2>&1; then
     err "whisper-ctranslate2 install did not finish cleanly."
-    err "Try running this manually: uv tool install whisper-ctranslate2"
+    err "Try running this manually:"
+    err "  uv tool install --reinstall whisper-ctranslate2 \\"
+    err "    --with nvidia-cublas-cu12 --with nvidia-cudnn-cu12"
+    exit 1
+  fi
+  if ! cuda_shims_present; then
+    err "CUDA runtime libs are still missing after install. Check the install log above."
     exit 1
   fi
   ok "whisper-ctranslate2 installed."
+}
+
+# Prepend the venv's bundled nvidia-*-cu12 lib directories to
+# LD_LIBRARY_PATH so the dynamic loader finds libcublas / libcudnn when
+# CTranslate2 dlopens them. Idempotent.
+export_cuda_ld_path() {
+  local libdir nv_lib_dirs=""
+  for libdir in "$WHISPER_TOOL_DIR"/lib/python*/site-packages/nvidia/*/lib; do
+    [ -d "$libdir" ] && nv_lib_dirs="$libdir:$nv_lib_dirs"
+  done
+  if [ -n "$nv_lib_dirs" ]; then
+    export LD_LIBRARY_PATH="${nv_lib_dirs}${LD_LIBRARY_PATH:-}"
+  fi
 }
 
 # ──────────────────────────────────────────────────────────────────────
@@ -301,6 +351,15 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
       missing=1
     fi
   done
+
+  if command -v whisper-ctranslate2 >/dev/null 2>&1; then
+    if cuda_shims_present; then
+      ok "CUDA runtime libs (cublas/cudnn): bundled in whisper-ctranslate2 venv"
+    else
+      warn "CUDA runtime libs (cublas/cudnn): NOT bundled (CTranslate2 will fail at transcribe time)"
+      missing=1
+    fi
+  fi
 
   for m in "$WHISPER_MODEL_DEFAULT" "$KOTOBA_MODEL_DEFAULT"; do
     if model_cached "$m"; then
@@ -404,6 +463,9 @@ fi
 notify "Transcription" "Starting transcription with faster-whisper on CUDA. Usually well under realtime on a modern GPU."
 info "Transcribing with whisper-ctranslate2 ($MODEL)..."
 info "Using local snapshot: $MODEL_DIR"
+
+# Make the bundled CUDA libs discoverable to CTranslate2's dlopen.
+export_cuda_ld_path
 
 # Word-splitting on the optional language flag is intentional here.
 # shellcheck disable=SC2086
