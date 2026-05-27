@@ -104,6 +104,12 @@ fi
 
 if grep -qi microsoft /proc/version 2>/dev/null; then
   info "Detected WSL2 environment. CUDA passthrough requires the NVIDIA driver on the Windows host."
+  # The WSL2 NVIDIA driver mounts its userspace tools (nvidia-smi and the
+  # CUDA shared libraries) at /usr/lib/wsl/lib, which is NOT on the default
+  # PATH for non-login shells. Add it so `command -v nvidia-smi` works.
+  if [ -d /usr/lib/wsl/lib ]; then
+    export PATH="/usr/lib/wsl/lib:$PATH"
+  fi
 fi
 
 if ! command -v nvidia-smi >/dev/null 2>&1; then
